@@ -13,7 +13,6 @@ import time
 import datetime
 
 from bs4 import BeautifulSoup
-from retrying import retry
 
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 
@@ -46,44 +45,55 @@ class ArticleSpider(BaseSpider):
         with open('./{}'.format(self.config['article']['keywords_path'])) as f:
             for line in f:
                 self.general_keywords.append(line.replace('\n', ''))
+        self.max_page = 30
+        self.area = '北京'
         logging.basicConfig(filename='article_spider.log', level=logging.DEBUG,
                             format='%(asctime)s [%(levelname)s] - %(message)s')
     
     def run(self):
-        for url, max_page in self.get_urls():
-            page = self.get_page(url, max_page)
-            for cur_page in range(1, page + 1):
+        for url in self.get_urls():
+            page_list = self.get_page(url)
+            for cur_page in page_list:
                 cur_url = '{0}&page={1}'.format(url, cur_page)
                 try:
                     result = self.request(cur_url)
                     if result:
-                        self.collection.insert_one(result)
+                        self.collection.insert_many(result)
                 except Exception as e:
                     logging.error('request fail, url {}, error {}'.format(cur_url, e), exc_info=True)
                 time.sleep(self.config['article']['crawl_delay'])
-            logging.info('present article num {0}, present cookie num {1}'.\
-                format(self.collection.count(), self.cookie_collection.find({'status': 'success'}).count()))
+            logging.info('current url {0}, current total article num {1}, current total cookie num {2}'.\
+                format(url, self.collection.count(), self.cookie_collection.find({'status': 'success'}).count()))
                 
     def request(self, url):
         self.headers['cookie'] = self.get_cookie()
         resp = requests.get(url, headers=self.headers)
+        logging.info('requests status code {}, url {}'.format(resp.status_code, url))
         if resp.status_code != 200:
             if resp.status_code in (302, 403):
                 self.del_cookie(url)
             return None
-        result = {}
+        
+        result = []
+        resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, 'lxml')
         for raw_info in soup.select('div[class = "c"][id]'):
-            result['weibo_id'] = raw_info['id']
-            result['content'] = raw_info.select('span[class = "ctt"]')[0].get_text()
-            result['create_time'] = raw_info.select('span[class = "ct"]')[0].get_text()[:12]
-            result['crawl_time'] = int(time.time())
-            result['comment_url'] = raw_info.select('a[class = "cc"]')[0]['href']
+            instance = {}
+            instance['weibo_id'] = raw_info['id']
+            instance['content'] = raw_info.select('span[class = "ctt"]')[0].get_text()
+            instance['create_time'] = raw_info.select('span[class = "ct"]')[0].get_text()[:12]
+            instance['crawl_time'] = int(time.time())
+            instance['comment_url'] = raw_info.select('a[class = "cc"]')[0]['href']
+            instance['area'] = self.area
+            logging.info('crawl content {}'.format(instance['content']))
+            result.append(instance)
         
         return result  
         
     def get_urls(self):
         for key, crawl_content in self.config['article']['crawl_contents'].items():
+            self.max_page = crawl_content['max_page']
+            self.area = crawl_content['area']
             date_begin = datetime.datetime.strptime(crawl_content['begin_date'], '%Y-%m-%d')
             date_end = datetime.datetime.strptime(crawl_content['end_date'], '%Y-%m-%d')
             time_spread = datetime.timedelta(days=1)
@@ -95,26 +105,30 @@ class ArticleSpider(BaseSpider):
                         date_begin.strftime("%Y%m%d"),
                         next_time.strftime("%Y%m%d")
                         )
-                    yield cur_url, crawl_content['max_page']
+                    yield cur_url
                     date_begin = next_time
 
-    def get_page(self, url, max_page):
+    def get_page(self, url):
         self.headers['cookie'] = self.get_cookie()
         resp = requests.get(url, headers=self.headers)
+        logging.info('requests status code {}, url {}'.format(resp.status_code, url))
         if resp.status_code != 200:
             if resp.status_code in (302, 403):
                 self.del_cookie(url)
-            return self.get_page(url, max_page)
+            return self.get_page(url, self.max_page)
         try:
             soup = BeautifulSoup(resp.text, 'lxml')
             page_str = soup.select('div[class = "pa"] > form > div')[0].get_text()
             total_page = int(page_str[page_str.find('1/') + 2:-1])
-            page = min(max_page, total_page)
+            page_list = list(range(1, total_page + 1))
+            if total_page > self.max_page:
+                random.shuffle(page_list)
+                page_list = page_list[:self.max_page]
         except Exception as e:
-            logging.warning('get page fail, url {0}, set page {1}'.format(url, max_page))
-            return max_page
+            logging.warning('get page fail, url {0}, use max_page'.format(url))
+            return list(range(1, self.max_page + 1))
         
-        return page
+        return page_list
     
     def del_cookie(self, url):
         logging.warning('request status != 200, url: {}, current cookie is unvaild'.format(url))

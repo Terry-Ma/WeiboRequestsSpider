@@ -5,31 +5,31 @@ article:
   crawl_contents:
     beijing:
       area: '北京'
-      max_page: 5
+      max_page: 30
       begin_date: '2020-06-11'
       end_date: '2020-07-19'
     heilongjiang:
       area: '黑龙江'
-      max_page: 5
+      max_page: 30
       begin_date: '2020-04-09'
       end_date: '2020-05-14'
     jilin:
       area: '吉林'
-      max_page: 5
+      max_page: 30
       begin_date: '2020-05-07'
       end_date: '2020-06-06'
     dalian:
       area: '大连'
-      max_page: 5
+      max_page: 30
       begin_date: '2020-07-22'
       end_date: '2020-08-19'
     xinjiang:
       area: '新疆'
-      max_page: 5
+      max_page: 30
       begin_date: '2020-07-16'
       end_date: '2020-08-29'
   keywords_path: 'general_keywords'
-  crawl_delay: 0.5
+  crawl_delay: 0.3
 
 comment:
   origin_article:
