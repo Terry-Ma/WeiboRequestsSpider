@@ -9,17 +9,20 @@ import sys
 
 from utils import ArticleSpider, CommentSpider
 
-def insert_cookies():
+def build_pool(pool_name):
+    if pool_name not in ('cookies', 'proxies'):
+        raise Exception('pool name error !!')
     mongo_client = pymongo.MongoClient(host='localhost', port=27017)
-    collection = mongo_client['weibo']['cookies']
+    collection = mongo_client['weibo'][pool_name]
     collection.drop()
-    with open('./cookies') as f:
+    with open('./{}'.format(pool_name)) as f:
         for line in f:
-            cookie_str = line.replace('\n', '')
-            collection.insert_one({'cookie': cookie_str, 'status': 'success'})
+            line = line.replace('\n', '')
+            collection.insert_one({pool_name: line, 'status': 'success'})
 
 if __name__ == '__main__':
-    insert_cookies()
+    build_pool('cookies')
+    build_pool('proxies')
     mode2spider = {
         'article': ArticleSpider,
         'comment': CommentSpider

@@ -21,18 +21,34 @@ class BaseSpider:
         with open('./conf.yml') as f:
             self.config = yaml.load(f, Loader=yaml.FullLoader)
         self.mongo_client = pymongo.MongoClient(host='localhost', port=27017)
-        self.cookie_collection = self.mongo_client['weibo']['cookies']
+        self.pool_collection = {
+            'cookies': self.mongo_client['weibo']['cookies'],
+            'proxies': self.mongo_client['weibo']['proxies']
+            }
         self.headers = {
             'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.102 Safari/537.36'
-        }
+            }
+        self.proxies = {
+            'https': 'https://220.174.236.211:8091'
+            }
         
-    def get_cookie(self):
-        cookies = self.cookie_collection.find({'status': 'success'})
-        cookies_num = cookies.count()
-        if cookies_num == 0:
-            raise Exception('The number of cookies is zero; the spider will shutdown!')
-        cookies_index = random.randint(0, cookies_num - 1)
-        return cookies[cookies_index]['cookie']
+    def pool_random_select(self, pool_name):
+        pool_items = self.pool_collection[pool_name].find({'status': 'success'})
+        pool_item_num = pool_items.count()
+        if pool_item_num == 0:
+            raise Exception('The number of {} is zero; the spider will shutdown!'.format(pool_name))
+        pool_item_index = random.randint(0, pool_item_num - 1)
+        return pool_items[pool_item_index][pool_name]
+    
+    def error_status_code(self, url, status_code):
+        if status_code in (302, 403):
+            pool_name = 'cookies'
+        elif status_code == 418:
+            pool_name = 'proxies'
+        logging.warning('request status {}, url: {}, current {} is unvaild'.format(status_code, url, pool_name))
+        self.pool_collection[pool_name].find_one_and_update(
+            {pool_name: self.headers['cookies'] if pool_name == 'cooloes' else self.proxies['https']},
+            {'$set': {'status': 'error'}})
 
 class ArticleSpider(BaseSpider):
     def __init__(self):
@@ -65,20 +81,21 @@ class ArticleSpider(BaseSpider):
                 except Exception as e:
                     logging.error('request fail, url {}, error {}'.format(cur_url, e), exc_info=True)
                 time.sleep(self.config['article']['crawl_delay'])
-            logging.info('current url {0}, current total article num {1}, current total cookie num {2}'.\
-                format(url, self.collection.count(), self.cookie_collection.find({'status': 'success'}).count()))
+            logging.info('current url {0}, current total article num {1}, cookie num {2}, proxies num {3}'.\
+                format(url, self.collection.count(), 
+                       self.pool_collection['cookies'].find({'status': 'success'}).count(),
+                       self.pool_collection['proxies'].find({'status': 'success'}).count()))
                 
     def request(self, url):
-        self.headers['cookie'] = self.get_cookie()
-        resp = requests.get(url, headers=self.headers)
+        self.headers['cookie'] = self.pool_random_select('cookies')
+        self.proxies['https'] = self.pool_random_select('proxies')
+        resp = requests.get(url, headers=self.headers, proxies=self.proxies)
         logging.info('requests status code {}, url {}'.format(resp.status_code, url))
         if resp.status_code != 200:
-            if resp.status_code in (302, 403):
-                self.del_cookie(url)
+            self.error_status_code(url, resp.status_code)
             return None
         
         result = []
-        resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, 'lxml')
         for raw_info in soup.select('div[class = "c"][id]'):
             instance = {}
@@ -111,12 +128,12 @@ class ArticleSpider(BaseSpider):
                     date_begin = next_time
 
     def get_page(self, url):
-        self.headers['cookie'] = self.get_cookie()
-        resp = requests.get(url, headers=self.headers)
+        self.headers['cookie'] = self.pool_random_select('cookies')
+        self.proxies['https'] = self.pool_random_select('proxies')
+        resp = requests.get(url, headers=self.headers, proxies=self.proxies)
         logging.info('requests status code {}, url {}'.format(resp.status_code, url))
         if resp.status_code != 200:
-            if resp.status_code in (302, 403):
-                self.del_cookie(url)
+            self.error_status_code(url, resp.status_code)
             return self.get_page(url)
         try:
             soup = BeautifulSoup(resp.text, 'lxml')
@@ -131,11 +148,6 @@ class ArticleSpider(BaseSpider):
             return list(range(1, self.max_page + 1))
         
         return page_list
-    
-    def del_cookie(self, url):
-        logging.warning('request status != 200, url: {}, current cookie is unvaild'.format(url))
-        self.cookie_collection.find_one_and_update({'cookie': self.headers['cookie']},
-                                                   {'$set': {'status': 'error'}})
 
 class CommentSpider(BaseSpider):
     def __init__(self):
