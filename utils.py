@@ -115,7 +115,7 @@ class ArticleSpider(BaseSpider):
         if resp.status_code != 200:
             if resp.status_code in (302, 403):
                 self.del_cookie(url)
-            return self.get_page(url, self.max_page)
+            return self.get_page(url)
         try:
             soup = BeautifulSoup(resp.text, 'lxml')
             page_str = soup.select('div[class = "pa"] > form > div')[0].get_text()
