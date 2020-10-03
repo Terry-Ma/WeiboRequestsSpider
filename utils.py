@@ -59,6 +59,9 @@ class ArticleSpider(BaseSpider):
                     result = self.request(cur_url)
                     if result:
                         self.collection.insert_many(result)
+                        logging.info('parse success, url {}'.format(cur_url))
+                    else:
+                        logging.info('parse fail, url {}'.format(cur_url))
                 except Exception as e:
                     logging.error('request fail, url {}, error {}'.format(cur_url, e), exc_info=True)
                 time.sleep(self.config['article']['crawl_delay'])
@@ -85,7 +88,6 @@ class ArticleSpider(BaseSpider):
             instance['crawl_time'] = int(time.time())
             instance['comment_url'] = raw_info.select('a[class = "cc"]')[0]['href']
             instance['area'] = self.area
-            logging.info('crawl content {}'.format(instance['content']))
             result.append(instance)
         
         return result  
