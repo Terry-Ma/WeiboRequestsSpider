@@ -75,8 +75,11 @@ class ArticleSpider(BaseSpider):
         if resp.status_code != 200:
             if resp.status_code in (302, 403):
                 self.del_cookie(url)
-            return None
-        
+                return None
+            elif resp.status_code == 418:
+                logging.error('ip is banned !! spider will shutdown !!')
+                raise Exception('ip is unvalid !!')
+
         result = []
         resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, 'lxml')
@@ -117,7 +120,10 @@ class ArticleSpider(BaseSpider):
         if resp.status_code != 200:
             if resp.status_code in (302, 403):
                 self.del_cookie(url)
-            return self.get_page(url)
+                return self.get_page(url)
+            elif resp.status_code == 418:
+                logging.error('ip is banned !! spider will shutdown !!')
+                raise Exception('ip is unvalid !!')
         try:
             soup = BeautifulSoup(resp.text, 'lxml')
             page_str = soup.select('div[class = "pa"] > form > div')[0].get_text()
