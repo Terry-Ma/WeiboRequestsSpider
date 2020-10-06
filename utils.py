@@ -160,7 +160,8 @@ class CommentSpider(BaseSpider):
                             format='%(asctime)s [%(levelname)s] - %(message)s')
     
     def run(self):
-        for article_info in self.article_collection.find():
+        article_infos = list(self.article_collection.find())  # prevent time out
+        for article_info in article_infos:
             url_format = article_info['comment_url'].replace('#cmtfrm', '') + '&page={}'
             for cur_page in range(1, self.crawl_page + 1):
                 cur_url = url_format.format(cur_page)
