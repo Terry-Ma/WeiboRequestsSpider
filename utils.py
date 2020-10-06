@@ -173,7 +173,6 @@ class CommentSpider(BaseSpider):
                         result['area'] = article_info['area']
                         result['weibo_id'] = article_info['weibo_id']
                         result.update(resp_result)
-                        print(result)
                         self.comment_collection.insert_one(result)
                 time.sleep(np.random.normal(self.config['comment']['crawl_delay_mu'], 
                                             self.config['comment']['crawl_delay_sigma'])) 

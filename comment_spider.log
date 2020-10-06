@@ -1,0 +1,4 @@
+2020-10-06 20:45:45,019 [INFO] - requests status code 200, url https://weibo.cn/comment/J6iYHyWlj?rl=1&page=1
+2020-10-06 20:45:45,044 [INFO] - parse success, url https://weibo.cn/comment/J6iYHyWlj?rl=1&page=1
+2020-10-06 20:45:46,759 [INFO] - requests status code 200, url https://weibo.cn/comment/J6iYHyWlj?rl=1&page=2
+2020-10-06 20:45:46,776 [INFO] - parse success, url https://weibo.cn/comment/J6iYHyWlj?rl=1&page=2
