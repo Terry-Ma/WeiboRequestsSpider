@@ -192,6 +192,7 @@ class CommentSpider(BaseSpider):
         soup = BeautifulSoup(resp.text, 'lxml')
         tag_list = soup.select('div[class = "c"]')
         if tag_list and tag_list[-1].get_text() == '还没有人针对这条微博发表评论!':  # no comment
+            logging.info('no more comment under the current article, url {}'.format(url))
             return [], True
         try:
             for raw_info in soup.select('div[class = "c"][id]'):
