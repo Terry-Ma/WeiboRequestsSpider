@@ -11,6 +11,8 @@ import logging
 import random
 import time
 import datetime
+import re
+import numpy as np
 
 from bs4 import BeautifulSoup
 
@@ -25,6 +27,7 @@ class BaseSpider:
         self.headers = {
             'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.102 Safari/537.36'
         }
+        self.area = '北京'
         
     def get_cookie(self):
         cookies = self.cookie_collection.find({'status': 'success'})
@@ -33,6 +36,11 @@ class BaseSpider:
             raise Exception('The number of cookies is zero; the spider will shutdown!')
         cookies_index = random.randint(0, cookies_num - 1)
         return cookies[cookies_index]['cookie']
+    
+    def del_cookie(self, url):
+        logging.warning('request fial, url: {}, current cookie is unvaild'.format(url))
+        self.cookie_collection.find_one_and_update({'cookie': self.headers['cookie']},
+                                                   {'$set': {'status': 'error'}})
 
 class ArticleSpider(BaseSpider):
     def __init__(self):
@@ -46,7 +54,6 @@ class ArticleSpider(BaseSpider):
             for line in f:
                 self.general_keywords.append(line.replace('\n', ''))
         self.max_page = 30
-        self.area = '北京'
         logging.basicConfig(filename='article_spider.log', level=logging.DEBUG,
                             format='%(asctime)s [%(levelname)s] - %(message)s')
     
@@ -117,7 +124,7 @@ class ArticleSpider(BaseSpider):
         self.headers['cookie'] = self.get_cookie()
         resp = requests.get(url, headers=self.headers)
         logging.info('requests status code {}, url {}'.format(resp.status_code, url))
-        if resp.status_code != 200:
+        if resp.status_code != 200:    # warning: status code is possible to be 200 if weibo denied our requests
             if resp.status_code in (302, 403):
                 self.del_cookie(url)
                 return self.get_page(url)
@@ -137,18 +144,73 @@ class ArticleSpider(BaseSpider):
             return list(range(1, self.max_page + 1))
         
         return page_list
-    
-    def del_cookie(self, url):
-        logging.warning('request status != 200, url: {}, current cookie is unvaild'.format(url))
-        self.cookie_collection.find_one_and_update({'cookie': self.headers['cookie']},
-                                                   {'$set': {'status': 'error'}})
 
 class CommentSpider(BaseSpider):
     def __init__(self):
-        pass
+        super().__init__()
+        logging.basicConfig(filename='comment_spider.log', level=logging.DEBUG,
+                            format='%(asctime)s [%(levelname)s] - %(message)s')
+        self.article_collection = self.mongo_client[self.config['comment']['origin_article']['database']]\
+            [self.config['comment']['origin_article']['collection']]
+        self.comment_collection = self.mongo_client[self.config['comment']['output']['database']]\
+            [self.config['comment']['output']['collection']]
+        self.crawl_page = self.config['comment']['crawl_page']
+        self.pattern = re.compile('回复.*:')
         logging.basicConfig(filename='comment_spider.log', level=logging.DEBUG,
                             format='%(asctime)s [%(levelname)s] - %(message)s')
     
-if __name__ == '__main__':
-    base_spider = BaseSpider()
-    print(base_spider.config)
+    def run(self):
+        for article_info in self.article_collection.find():
+            url_format = article_info['comment_url'].replace('#cmtfrm', '') + '&page={}'
+            for cur_page in range(1, self.crawl_page + 1):
+                cur_url = url_format.format(cur_page)
+                resp_results, no_comment = self.request(cur_url)
+                if no_comment:  # no more comment under the current article
+                    break
+                if resp_results:
+                    for resp_result in resp_results:
+                        result = {}
+                        result['area'] = article_info['area']
+                        result['weibo_id'] = article_info['weibo_id']
+                        result.update(resp_result)
+                        print(result)
+                        self.comment_collection.insert_one(result)
+                time.sleep(np.random.normal(self.config['comment']['crawl_delay_mu'], 
+                                            self.config['comment']['crawl_delay_sigma'])) 
+            logging.info('current total comment num {}, cookie num {}'.\
+                format(self.comment_collection.count(), self.cookie_collection.find({'status': 'success'}).count()))
+                
+    def request(self, url):
+        self.headers['cookie'] = self.get_cookie()
+        resp = requests.get(url, headers=self.headers)
+        logging.info('requests status code {}, url {}'.format(resp.status_code, url))
+        if resp.status_code == 418:  # ip banned
+            logging.error('ip is banned !! spider will shutdown !!')
+            raise Exception('ip is unvalid !!')
+        result = []
+        resp.encoding = 'utf-8'
+        soup = BeautifulSoup(resp.text, 'lxml')
+        tag_list = soup.select('div[class = "c"]')
+        if tag_list and tag_list[-1].get_text() == '还没有人针对这条微博发表评论!':  # no comment
+            return [], True
+        try:
+            for raw_info in soup.select('div[class = "c"][id]'):
+                instance = {}
+                instance['comment_id'] = raw_info['id']
+                if not instance['comment_id'].startswith('M_'):
+                    raw_content = raw_info.select('span[class = "ctt"]')[0].get_text()
+                    if raw_content[:2] == '回复':
+                        instance['content'] = self.pattern.split(raw_content)[1]
+                        instance['is_reply'] = 1
+                    else:
+                        instance['content'] = raw_content
+                        instance['is_reply'] = 0
+                    instance['create_time'] = raw_info.select('span[class = "ct"]')[0].get_text()[:12]
+                    result.append(instance)
+        except Exception as e:   # parse fail
+            logging.error('parse fail, url {}, delete the current cookie and retry'.format(url), exc_info=True)
+            self.del_cookie(url)
+            return self.request(url)  # retry
+        logging.info('parse success, url {}'.format(url))
+        
+        return result, False
