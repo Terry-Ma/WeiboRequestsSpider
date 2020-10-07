@@ -39,5 +39,5 @@ comment:
     database: 'weibo'
     collection: 'comment'
   crawl_page: 50
-  crawl_delay_mu: 1
+  crawl_delay_mu: 0.75
   crawl_delay_sigma: 0.1

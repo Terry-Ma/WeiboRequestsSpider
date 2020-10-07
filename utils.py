@@ -98,6 +98,7 @@ class ArticleSpider(BaseSpider):
             instance['crawl_time'] = int(time.time())
             instance['comment_url'] = raw_info.select('a[class = "cc"]')[0]['href']
             instance['area'] = self.area
+            instance['comment_crawled'] = 0
             result.append(instance)
         
         return result  
@@ -155,12 +156,13 @@ class CommentSpider(BaseSpider):
         self.comment_collection = self.mongo_client[self.config['comment']['output']['database']]\
             [self.config['comment']['output']['collection']]
         self.crawl_page = self.config['comment']['crawl_page']
-        self.pattern = re.compile('回复.*:')
+        self.pattern = re.compile(r'回复.*[:\s]')
         logging.basicConfig(filename='comment_spider.log', level=logging.DEBUG,
                             format='%(asctime)s [%(levelname)s] - %(message)s')
     
     def run(self):
-        article_infos = list(self.article_collection.find())  # prevent time out
+        article_infos = [article_info for article_info in self.article_collection.find() \
+            if article_info['comment_crawled'] == 0]
         for article_info in article_infos:
             url_format = article_info['comment_url'].replace('#cmtfrm', '') + '&page={}'
             for cur_page in range(1, self.crawl_page + 1):
@@ -176,7 +178,9 @@ class CommentSpider(BaseSpider):
                         result.update(resp_result)
                         self.comment_collection.insert_one(result)
                 time.sleep(np.random.normal(self.config['comment']['crawl_delay_mu'], 
-                                            self.config['comment']['crawl_delay_sigma'])) 
+                                            self.config['comment']['crawl_delay_sigma']))
+            self.article_collection.update_many({'weibo_id': article_info['weibo_id']},
+                                                {'$set': {'comment_crawled': 1}})
             logging.info('current total comment num {}, cookie num {}'.\
                 format(self.comment_collection.count(), self.cookie_collection.find({'status': 'success'}).count()))
                 
@@ -192,7 +196,7 @@ class CommentSpider(BaseSpider):
         soup = BeautifulSoup(resp.text, 'lxml')
         tag_list = soup.select('div[class = "c"]')
         if tag_list and tag_list[-1].get_text() == '还没有人针对这条微博发表评论!':  # no comment
-            logging.info('no more comment under the current article, url {}'.format(url))
+            logging.info('no more comments under the current article, url {}'.format(url))
             return [], True
         try:
             for raw_info in soup.select('div[class = "c"][id]'):
@@ -201,7 +205,11 @@ class CommentSpider(BaseSpider):
                 if not instance['comment_id'].startswith('M_'):
                     raw_content = raw_info.select('span[class = "ctt"]')[0].get_text()
                     if raw_content[:2] == '回复':
-                        instance['content'] = self.pattern.split(raw_content)[1]
+                        str_split = self.pattern.split(raw_content)
+                        if len(str_split) > 1:
+                            instance['content'] = str_split[1]
+                        else:
+                            instance['content'] = raw_content
                         instance['is_reply'] = 1
                     else:
                         instance['content'] = raw_content
