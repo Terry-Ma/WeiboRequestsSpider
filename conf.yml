@@ -29,7 +29,8 @@ article:
       begin_date: '2020-07-16'
       end_date: '2020-08-29'
   keywords_path: 'general_keywords'
-  crawl_delay: 0.75
+  crawl_delay_mu: 0.75
+  crawl_delay_sigma: 0.1
 
 comment:
   origin_article:

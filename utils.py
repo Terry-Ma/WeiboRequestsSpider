@@ -27,7 +27,6 @@ class BaseSpider:
         self.headers = {
             'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.102 Safari/537.36'
         }
-        self.area = '北京'
         
     def get_cookie(self):
         cookies = self.cookie_collection.find({'status': 'success'})
@@ -67,7 +66,8 @@ class ArticleSpider(BaseSpider):
                 resp_results = self.request(cur_url)
                 if resp_results:
                     self.collection.insert_many(resp_results)
-                time.sleep(self.config['article']['crawl_delay'])
+                time.sleep(np.random.normal(self.config['article']['crawl_delay_mu'],
+                                            self.config['article']['crawl_delay_sigma']))
             logging.info('current total article num {0}, cookie num {1}'.\
                 format(self.collection.count(), self.cookie_collection.find({'status': 'success'}).count()))
                 
