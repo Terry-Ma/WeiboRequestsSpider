@@ -45,6 +45,7 @@ class BaseSpider:
 class ArticleSpider(BaseSpider):
     def __init__(self):
         super().__init__()
+        self.max_page_per_search = 100
         self.collection = self.mongo_client[self.config['article']['output']['database']]\
             [self.config['article']['output']['collection']]
         self.url_format = 'https://weibo.cn/search/mblog?hideSearchFrame=&keyword={}' +\
@@ -53,55 +54,66 @@ class ArticleSpider(BaseSpider):
         with open('./{}'.format(self.config['article']['keywords_path'])) as f:
             for line in f:
                 self.general_keywords.append(line.replace('\n', ''))
-        self.max_page = 30
         logging.basicConfig(filename='article_spider.log', level=logging.DEBUG,
                             format='%(asctime)s [%(levelname)s] - %(message)s')
     
     def run(self):
         for url in self.get_urls():
-            page_list = self.get_page(url)
+            all_page_list = list(range(1, self.max_page_per_search + 1))
+            random.shuffle(all_page_list)
+            page_list = all_page_list[:self.max_page]
             for cur_page in page_list:
                 cur_url = '{0}&page={1}'.format(url, cur_page)
-                try:
-                    result = self.request(cur_url)
-                    if result:
-                        self.collection.insert_many(result)
-                        logging.info('parse success, url {}'.format(cur_url))
-                    else:
-                        logging.info('parse fail, url {}'.format(cur_url))
-                except Exception as e:
-                    logging.error('request fail, url {}, error {}'.format(cur_url, e), exc_info=True)
+                resp_results = self.request(cur_url)
+                if resp_results:
+                    self.collection.insert_many(resp_results)
                 time.sleep(self.config['article']['crawl_delay'])
-            logging.info('current url {0}, current total article num {1}, current total cookie num {2}'.\
-                format(url, self.collection.count(), self.cookie_collection.find({'status': 'success'}).count()))
+            logging.info('current total article num {0}, cookie num {1}'.\
+                format(self.collection.count(), self.cookie_collection.find({'status': 'success'}).count()))
                 
     def request(self, url):
         self.headers['cookie'] = self.get_cookie()
         resp = requests.get(url, headers=self.headers)
         logging.info('requests status code {}, url {}'.format(resp.status_code, url))
-        if resp.status_code != 200:
-            if resp.status_code in (302, 403):
-                self.del_cookie(url)
-                return None
-            elif resp.status_code == 418:
-                logging.error('ip is banned !! spider will shutdown !!')
-                raise Exception('ip is unvalid !!')
-
+        if resp.status_code == 418:  # ip banned
+            logging.error('ip is banned !! spider will shutdown !!')
+            raise Exception('ip is unvalid !!')
         result = []
         resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, 'lxml')
-        for raw_info in soup.select('div[class = "c"][id]'):
-            instance = {}
-            instance['weibo_id'] = raw_info['id']
-            instance['content'] = raw_info.select('span[class = "ctt"]')[0].get_text()
-            instance['create_time'] = raw_info.select('span[class = "ct"]')[0].get_text()[:12]
-            instance['crawl_time'] = int(time.time())
-            instance['comment_url'] = raw_info.select('a[class = "cc"]')[0]['href']
-            instance['area'] = self.area
-            instance['comment_crawled'] = 0
-            result.append(instance)
+        try:
+            for raw_info in soup.select('div[class = "c"][id]'):
+                instance = {}
+                instance['weibo_id'] = raw_info['id']
+                if len(raw_info.select('span[class = "cmt"]')) == 0:  # not forward
+                    instance['is_forward'] = 0
+                    instance['content'] = raw_info.select('span[class = "ctt"]')[0].get_text()[1:]
+                    instance['comment_url'] = raw_info.select('a[class = "cc"]')[0]['href']
+                    instance['origin_content'] = ''
+                else:  # forard
+                    instance['is_forward'] = 1
+                    div_list = raw_info.select('div')
+                    index = len(div_list) - 1
+                    while index >= 0 and len(div_list[index].select('span[class = "cmt"]')) == 0:
+                        index += 1
+                    raw_content = div_list[index].get_text()
+                    left = raw_content.find('转发理由:')
+                    right = raw_content.find('赞[')
+                    instance['content'] = raw_content[left + 5:right]
+                    instance['comment_url'] = raw_info.select('a[class = "cc"]')[-1]['href']
+                    instance['origin_content'] = raw_info.select('span[class = "ctt"]')[0].get_text()
+                instance['create_time'] = raw_info.select('span[class = "ct"]')[0].get_text()[:12]
+                instance['crawl_time'] = int(time.time())
+                instance['area'] = self.area
+                instance['comment_crawled'] = 0
+                result.append(instance)
+        except Exception as e:   # parse fail
+            logging.error('parse fail, url {}, delete the current cookie and retry'.format(url), exc_info=True)
+            self.del_cookie(url)
+            return self.request(url)  # retry
+        logging.info('parse success, url {}'.format(url))
         
-        return result  
+        return result
         
     def get_urls(self):
         for key, crawl_content in self.config['article']['crawl_contents'].items():
@@ -120,31 +132,6 @@ class ArticleSpider(BaseSpider):
                         )
                     yield cur_url
                     date_begin = next_time
-
-    def get_page(self, url):
-        self.headers['cookie'] = self.get_cookie()
-        resp = requests.get(url, headers=self.headers)
-        logging.info('requests status code {}, url {}'.format(resp.status_code, url))
-        if resp.status_code != 200:    # warning: status code is possible to be 200 if weibo denied our requests
-            if resp.status_code in (302, 403):
-                self.del_cookie(url)
-                return self.get_page(url)
-            elif resp.status_code == 418:
-                logging.error('ip is banned !! spider will shutdown !!')
-                raise Exception('ip is unvalid !!')
-        try:
-            soup = BeautifulSoup(resp.text, 'lxml')
-            page_str = soup.select('div[class = "pa"] > form > div')[0].get_text()
-            total_page = int(page_str[page_str.find('1/') + 2:-1])
-            page_list = list(range(1, total_page + 1))
-            if total_page > self.max_page:
-                random.shuffle(page_list)
-                page_list = page_list[:self.max_page]
-        except Exception as e:
-            logging.warning('get page fail, url {0}, use max_page'.format(url))
-            return list(range(1, self.max_page + 1))
-        
-        return page_list
 
 class CommentSpider(BaseSpider):
     def __init__(self):
