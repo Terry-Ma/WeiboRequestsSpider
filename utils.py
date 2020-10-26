@@ -32,6 +32,7 @@ class BaseSpider:
         cookies = self.cookie_collection.find({'status': 'success'})
         cookies_num = cookies.count()
         if cookies_num == 0:
+            logging.error('The number of cookies is zero; the spider will shutdown!')
             raise Exception('The number of cookies is zero; the spider will shutdown!')
         cookies_index = random.randint(0, cookies_num - 1)
         return cookies[cookies_index]['cookie']
@@ -111,7 +112,7 @@ class ArticleSpider(BaseSpider):
             return result, False
         if not result:
             tag_list = soup.select('span[class = "pmf"]')
-            if len(tag_list) > 0 and tag_list[0].get_text() == '返回页面顶部':  # no article
+            if (len(tag_list) > 0 and tag_list[0].get_text() == '返回页面顶部') or ('抱歉，未找到' in resp.text):  # no article
                 logging.info('no more articles, url {}'.format(url))
                 return result, True
             else: 
