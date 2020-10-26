@@ -111,7 +111,7 @@ class ArticleSpider(BaseSpider):
             logging.error('parse fail, url {}, delete the current cookie and retry'.format(url), exc_info=True)
             self.del_cookie(url)
             return self.request(url)  # retry
-        logging.info('parse success, url {}'.format(url))
+        logging.info('parse success, url {}, article_num {}'.format(url, len(result)))
         
         return result
         
@@ -155,15 +155,14 @@ class CommentSpider(BaseSpider):
             for cur_page in range(1, self.crawl_page + 1):
                 cur_url = url_format.format(cur_page)
                 resp_results, no_comment = self.request(cur_url)
-                if no_comment:  # no more comment under the current article
+                if not resp_results:  # no more comment under the current article
                     break
-                if resp_results:
-                    for resp_result in resp_results:
-                        result = {}
-                        result['area'] = article_info['area']
-                        result['weibo_id'] = article_info['weibo_id']
-                        result.update(resp_result)
-                        self.comment_collection.insert_one(result)
+                for resp_result in resp_results:
+                    result = {}
+                    result['area'] = article_info['area']
+                    result['weibo_id'] = article_info['weibo_id']
+                    result.update(resp_result)
+                    self.comment_collection.insert_one(result)
                 time.sleep(np.random.normal(self.config['comment']['crawl_delay_mu'], 
                                             self.config['comment']['crawl_delay_sigma']))
             self.article_collection.update_many({'weibo_id': article_info['weibo_id']},
@@ -184,7 +183,7 @@ class CommentSpider(BaseSpider):
         tag_list = soup.select('div[class = "c"]')
         if tag_list and tag_list[-1].get_text() == '还没有人针对这条微博发表评论!':  # no comment
             logging.info('no more comments under the current article, url {}'.format(url))
-            return [], True
+            return result
         try:
             for raw_info in soup.select('div[class = "c"][id]'):
                 instance = {}
@@ -207,6 +206,6 @@ class CommentSpider(BaseSpider):
             logging.error('parse fail, url {}, delete the current cookie and retry'.format(url), exc_info=True)
             self.del_cookie(url)
             return self.request(url)  # retry
-        logging.info('parse success, url {}'.format(url))
+        logging.info('parse success, url {}, comment_num {}'.format(url, len(result)))
         
-        return result, False
+        return result
