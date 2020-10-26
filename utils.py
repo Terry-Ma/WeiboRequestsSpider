@@ -36,15 +36,14 @@ class BaseSpider:
         cookies_index = random.randint(0, cookies_num - 1)
         return cookies[cookies_index]['cookie']
     
-    def del_cookie(self, url):
-        logging.warning('request fial, url: {}, current cookie is unvaild'.format(url))
+    def del_cookie(self):
+        logging.warning('delete current cookie: {}'.format(self.headers['cookie']))
         self.cookie_collection.find_one_and_update({'cookie': self.headers['cookie']},
                                                    {'$set': {'status': 'error'}})
 
 class ArticleSpider(BaseSpider):
     def __init__(self):
         super().__init__()
-        self.max_page_per_search = 100
         self.collection = self.mongo_client[self.config['article']['output']['database']]\
             [self.config['article']['output']['collection']]
         self.url_format = 'https://weibo.cn/search/mblog?hideSearchFrame=&keyword={}' +\
@@ -53,17 +52,17 @@ class ArticleSpider(BaseSpider):
         with open('./{}'.format(self.config['article']['keywords_path'])) as f:
             for line in f:
                 self.general_keywords.append(line.replace('\n', ''))
+        self.pattern = re.compile(r'')
         logging.basicConfig(filename='article_spider.log', level=logging.DEBUG,
                             format='%(asctime)s [%(levelname)s] - %(message)s')
     
     def run(self):
         for url in self.get_urls():
-            all_page_list = list(range(1, self.max_page_per_search + 1))
-            random.shuffle(all_page_list)
-            page_list = all_page_list[:self.max_page]
-            for cur_page in page_list:
+            for cur_page in range(1, self.max_page + 1):
                 cur_url = '{0}&page={1}'.format(url, cur_page)
-                resp_results = self.request(cur_url)
+                resp_results, no_article = self.request(cur_url)
+                if no_article:  # no more articles
+                    break
                 if resp_results:
                     self.collection.insert_many(resp_results)
                 time.sleep(np.random.normal(self.config['article']['crawl_delay_mu'],
@@ -107,13 +106,22 @@ class ArticleSpider(BaseSpider):
                 instance['area'] = self.area
                 instance['comment_crawled'] = 0
                 result.append(instance)
-        except Exception as e:   # parse fail
-            logging.error('parse fail, url {}, delete the current cookie and retry'.format(url), exc_info=True)
-            self.del_cookie(url)
-            return self.request(url)  # retry
-        logging.info('parse success, url {}, article_num {}'.format(url, len(result)))
+        except Exception as e:   # parse error
+            logging.error('parse error, url {}'.format(url), exc_info=True)
+            return result, False
+        if not result:
+            tag_list = soup.select('span[class = "pmf"]')
+            if len(tag_list) > 0 and tag_list[0].get_text() == '返回页面顶部':  # no article
+                logging.info('no more articles, url {}'.format(url))
+                return result, True
+            else: 
+                logging.warning('parse fail, url {}, delete current cookie and retry!'.format(url))
+                self.del_cookie()
+                return self.request(url)  # retry
+        else:
+            logging.info('parse success, url {}, article num {}'.format(url, len(result)))
         
-        return result
+        return result, False
         
     def get_urls(self):
         for key, crawl_content in self.config['article']['crawl_contents'].items():
@@ -155,7 +163,7 @@ class CommentSpider(BaseSpider):
             for cur_page in range(1, self.crawl_page + 1):
                 cur_url = url_format.format(cur_page)
                 resp_results, no_comment = self.request(cur_url)
-                if not resp_results:  # no more comment under the current article
+                if no_comment:  # no more comments under the current article
                     break
                 for resp_result in resp_results:
                     result = {}
@@ -183,7 +191,7 @@ class CommentSpider(BaseSpider):
         tag_list = soup.select('div[class = "c"]')
         if tag_list and tag_list[-1].get_text() == '还没有人针对这条微博发表评论!':  # no comment
             logging.info('no more comments under the current article, url {}'.format(url))
-            return result
+            return result, True
         try:
             for raw_info in soup.select('div[class = "c"][id]'):
                 instance = {}
@@ -202,10 +210,14 @@ class CommentSpider(BaseSpider):
                         instance['is_reply'] = 0
                     instance['create_time'] = raw_info.select('span[class = "ct"]')[0].get_text()[:12]
                     result.append(instance)
-        except Exception as e:   # parse fail
-            logging.error('parse fail, url {}, delete the current cookie and retry'.format(url), exc_info=True)
-            self.del_cookie(url)
+        except Exception as e:   # parse error
+            logging.error('parse error, url {}'.format(url), exc_info=True)
+            return result, False
+        if not result:
+            logging.warning('parse fail, url {}, delete current cookie and retry!'.format(url))
+            self.del_cookie()
             return self.request(url)  # retry
-        logging.info('parse success, url {}, comment_num {}'.format(url, len(result)))
+        else:
+            logging.info('parse success, url {}, comment num {}'.format(url, len(result)))
         
-        return result
+        return result, False
