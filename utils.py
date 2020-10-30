@@ -216,7 +216,7 @@ class CommentSpider(BaseSpider):
             return result, False
         if not result:
             logging.warning('parse fail, url {}, delete current cookie and retry!'.format(url))
-            self.del_cookie()
+            # self.del_cookie()   # it's difficult to distinguish whether it is caused by cookie
             return self.request(url)  # retry
         else:
             logging.info('parse success, url {}, comment num {}'.format(url, len(result)))
